@@ -9,6 +9,28 @@ from dataset import create_test_loader
 from model import create_model, load_checkpoint
 
 
+def apply_tta(images, tta_type):
+    if tta_type == "none":
+        return images
+    if tta_type == "hflip":
+        transformed = torch.flip(images, dims=[3])
+    elif tta_type == "vflip":
+        transformed = torch.flip(images, dims=[2])
+    elif tta_type == "hvflip":
+        transformed = torch.flip(images, dims=[2, 3])
+    elif tta_type == "transpose":
+        transformed = images.transpose(-1, -2)
+    elif tta_type == "rot90":
+        transformed = torch.rot90(images, k=1, dims=(2, 3))
+    elif tta_type == "rot180":
+        transformed = torch.rot90(images, k=2, dims=(2, 3))
+    elif tta_type == "rot270":
+        transformed = torch.rot90(images, k=3, dims=(2, 3))
+    else:
+        transformed = images
+    return transformed.contiguous()
+
+
 def predict():
     config = Config()
     device = torch.device(config.DEVICE if torch.cuda.is_available() else "cpu")
@@ -19,7 +41,7 @@ def predict():
         return
     test_loader = create_test_loader(config)
     model = create_model(config, device)
-    load_checkpoint(model, config.BEST_MODEL_PATH, device)
+    load_checkpoint(model, config.BEST_MODEL_PATH, device, use_ema_weights=True)
     model.eval()
     
     predictions, image_ids = [], []
@@ -27,14 +49,18 @@ def predict():
     with torch.no_grad():
         for images, _, img_ids in tqdm(test_loader, desc="预测"):
             images = images.to(device)
-            
-            if config.USE_AMP:
-                with autocast():
-                    outputs = model(images)
-            else:
-                outputs = model(images)
-            
-            _, preds = torch.max(outputs, 1)
+            prob_sum = None
+            for tta_name in config.TTA_TRANSFORMS:
+                aug_images = apply_tta(images, tta_name)
+                if config.USE_AMP:
+                    with autocast():
+                        logits = model(aug_images)
+                else:
+                    logits = model(aug_images)
+                probs = torch.softmax(logits, dim=1)
+                prob_sum = probs if prob_sum is None else (prob_sum + probs)
+            avg_probs = prob_sum / max(1, len(config.TTA_TRANSFORMS))
+            preds = torch.argmax(avg_probs, dim=1)
             predictions.extend(preds.cpu().numpy().tolist())
             image_ids.extend(img_ids)
     

@@ -19,7 +19,7 @@ def create_model(config, device):
     return model.to(device)
 
 
-def save_checkpoint(model, optimizer, scheduler, epoch, val_acc, save_path):
+def save_checkpoint(model, optimizer, scheduler, epoch, val_acc, save_path, ema_state_dict=None):
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -27,13 +27,19 @@ def save_checkpoint(model, optimizer, scheduler, epoch, val_acc, save_path):
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
         'val_acc': val_acc
     }
+    if ema_state_dict is not None:
+        checkpoint['ema_state_dict'] = ema_state_dict
     torch.save(checkpoint, save_path)
     print(f"模型已保存: {save_path}")
 
 
-def load_checkpoint(model, checkpoint_path, device, optimizer=None, scheduler=None):
+def load_checkpoint(model, checkpoint_path, device, optimizer=None, scheduler=None, use_ema_weights=True):
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    if use_ema_weights and 'ema_state_dict' in checkpoint:
+        state_dict = checkpoint['ema_state_dict']
+    else:
+        state_dict = checkpoint['model_state_dict']
+    model.load_state_dict(state_dict)
     
     if optimizer and 'optimizer_state_dict' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

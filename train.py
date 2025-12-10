@@ -1,3 +1,4 @@
+import math
 import os
 import torch
 import torch.nn as nn
@@ -8,6 +9,9 @@ import random
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
+from timm.data import Mixup
+from timm.loss import SoftTargetCrossEntropy, LabelSmoothingCrossEntropy
+from timm.utils import ModelEmaV2
 
 from config import Config
 from dataset import create_data_loaders
@@ -26,7 +30,7 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, config, epoch):
+def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, config, epoch, mixup_fn=None, ema_model=None):
     model.train()
     running_loss = 0.0
     all_preds, all_labels = [], []
@@ -35,6 +39,9 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, c
     
     for batch_idx, (images, labels, _) in enumerate(pbar):
         images, labels = images.to(device), labels.to(device)
+        targets_for_acc = labels.clone()
+        if mixup_fn is not None:
+            images, labels = mixup_fn(images, labels)
         optimizer.zero_grad()
         
         if config.USE_AMP:
@@ -52,11 +59,13 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, c
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.GRAD_CLIP)
             optimizer.step()
+        if ema_model is not None:
+            ema_model.update(model)
         
         running_loss += loss.item()
         _, preds = torch.max(outputs, 1)
         all_preds.extend(preds.cpu().numpy())
-        all_labels.extend(labels.cpu().numpy())
+        all_labels.extend(targets_for_acc.cpu().numpy())
         
         if (batch_idx + 1) % config.LOG_INTERVAL == 0:
             pbar.set_postfix({'loss': f'{running_loss / (batch_idx + 1):.4f}'})
@@ -123,6 +132,18 @@ def plot_training_history(history, save_path='training_history.png'):
     plt.close()
 
 
+def warmup_cosine_lambda(epoch, config):
+    if config.NUM_EPOCHS <= 1:
+        return 1.0
+    if epoch < config.WARMUP_EPOCHS:
+        return float(epoch + 1) / max(1, config.WARMUP_EPOCHS)
+    progress = (epoch - config.WARMUP_EPOCHS) / max(1, config.NUM_EPOCHS - config.WARMUP_EPOCHS)
+    progress = min(max(progress, 0.0), 1.0)
+    min_factor = config.MIN_LR / config.LEARNING_RATE
+    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return min_factor + (1 - min_factor) * cosine
+
+
 def train_model():
     config = Config()
     set_seed(config.SEED)
@@ -135,10 +156,29 @@ def train_model():
     
     train_loader, val_loader = create_data_loaders(config)
     model = create_model(config, device)
+    ema_model = ModelEmaV2(model, decay=config.EMA_DECAY) if config.USE_EMA else None
     
-    criterion = nn.CrossEntropyLoss()
+    if config.USE_MIXUP and (config.MIXUP_ALPHA > 0 or config.CUTMIX_ALPHA > 0):
+        mixup_fn = Mixup(
+            mixup_alpha=config.MIXUP_ALPHA,
+            cutmix_alpha=config.CUTMIX_ALPHA,
+            prob=config.MIXUP_PROB,
+            switch_prob=config.MIXUP_SWITCH_PROB,
+            mode=config.MIXUP_MODE,
+            label_smoothing=config.LABEL_SMOOTHING,
+            num_classes=config.NUM_CLASSES
+        )
+        train_criterion = SoftTargetCrossEntropy()
+    else:
+        mixup_fn = None
+        if config.LABEL_SMOOTHING > 0:
+            train_criterion = LabelSmoothingCrossEntropy(smoothing=config.LABEL_SMOOTHING)
+        else:
+            train_criterion = nn.CrossEntropyLoss()
+    val_criterion = nn.CrossEntropyLoss()
+    
     optimizer = optim.AdamW(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.NUM_EPOCHS, eta_min=config.MIN_LR)
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: warmup_cosine_lambda(epoch, config))
     scaler = GradScaler() if config.USE_AMP else None
     
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'val_f1': []}
@@ -150,8 +190,20 @@ def train_model():
     for epoch in range(config.NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{config.NUM_EPOCHS}, LR: {optimizer.param_groups[0]['lr']:.6f}")
         
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, config, epoch)
-        val_loss, val_acc, val_f1 = validate(model, val_loader, criterion, device, config, epoch)
+        train_loss, train_acc = train_one_epoch(
+            model,
+            train_loader,
+            train_criterion,
+            optimizer,
+            device,
+            scaler,
+            config,
+            epoch,
+            mixup_fn=mixup_fn,
+            ema_model=ema_model
+        )
+        eval_model = ema_model.ema if ema_model is not None else model
+        val_loss, val_acc, val_f1 = validate(eval_model, val_loader, val_criterion, device, config, epoch)
         scheduler.step()
         
         history['train_loss'].append(train_loss)
@@ -165,7 +217,16 @@ def train_model():
         
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            save_checkpoint(model, optimizer, scheduler, epoch, val_acc, config.BEST_MODEL_PATH)
+            ema_state = ema_model.ema.state_dict() if ema_model is not None else None
+            save_checkpoint(
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                val_acc,
+                config.BEST_MODEL_PATH,
+                ema_state_dict=ema_state
+            )
             print(f"最佳 Acc: {val_acc:.4f}")
             patience_counter = 0
         else:
