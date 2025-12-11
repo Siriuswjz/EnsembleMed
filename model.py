@@ -2,20 +2,59 @@ import torch
 import torch.nn as nn
 import timm
 
-class ImageClassifier(nn.Module):
+try:
+    import open_clip
+except ImportError:
+    open_clip = None
+
+class TimmImageClassifier(nn.Module):
     def __init__(self, model_name, num_classes, pretrained=True):
-        super(ImageClassifier, self).__init__()
+        super().__init__()
         self.model = timm.create_model(model_name, pretrained=pretrained, num_classes=num_classes)
-        
         total_params = sum(p.numel() for p in self.parameters())
-        print(f"模型: {model_name}, 参数量: {total_params/1e6:.1f}M")
+        print(f"模型(timm): {model_name}, 参数量: {total_params/1e6:.1f}M")
     
     def forward(self, x):
         return self.model(x)
 
 
+class OpenClipClassifier(nn.Module):
+    def __init__(self, model_name, pretrained, num_classes):
+        super().__init__()
+        if open_clip is None:
+            raise ImportError("open_clip_torch 未安装，请先 pip install open_clip_torch")
+        clip_model, _, _ = open_clip.create_model_and_transforms(
+            model_name,
+            pretrained=pretrained,
+            cache_dir=None
+        )
+        self.backbone = clip_model.visual
+        embed_dim = getattr(self.backbone, 'output_dim', getattr(clip_model, 'embed_dim', 1024))
+        self.head = nn.Linear(embed_dim, num_classes)
+        self._print_params(model_name)
+    
+    def _print_params(self, model_name):
+        total_params = sum(p.numel() for p in self.parameters())
+        print(f"模型(OpenCLIP): {model_name}, 参数量: {total_params/1e6:.1f}M")
+    
+    def forward(self, x):
+        dtype = next(self.backbone.parameters()).dtype
+        x = x.to(dtype)
+        features = self.backbone(x)
+        if isinstance(features, tuple):
+            features = features[0]
+        if features.dim() > 2:
+            features = features.mean(dim=1)
+        features = features.to(self.head.weight.dtype)
+        logits = self.head(features)
+        return logits
+
+
 def create_model(config, device):
-    model = ImageClassifier(config.MODEL_NAME, config.NUM_CLASSES, config.PRETRAINED)
+    if config.MODEL_LIBRARY.lower() == "open_clip":
+        model = OpenClipClassifier(config.OPENCLIP_MODEL, config.OPENCLIP_PRETRAINED, config.NUM_CLASSES)
+    else:
+        model = TimmImageClassifier(config.MODEL_NAME, config.NUM_CLASSES, config.PRETRAINED)
     return model.to(device)
 
 

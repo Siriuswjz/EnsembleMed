@@ -5,13 +5,16 @@ class Config:
     TRAIN_DIR = os.path.join(DATA_DIR, "TrainSet")
     TEST_DIR = os.path.join(DATA_DIR, "TestSet")
     
-    MODEL_NAME = "eva02_large_patch14_448.mim_m38m"
+    MODEL_LIBRARY = "open_clip"  # open_clip 或 timm
+    MODEL_NAME = "eva02_large_patch14_448.mim_m38m"  # 备用 timm 模型
+    OPENCLIP_MODEL = "ViT-bigG-14"
+    OPENCLIP_PRETRAINED = "laion2b_s39b_b160k"
     NUM_CLASSES = 2
     PRETRAINED = True
     
     IMG_SIZE = 448
     BATCH_SIZE = 4
-    NUM_WORKERS = 4
+    NUM_WORKERS = 8
     NUM_EPOCHS = 35
     LEARNING_RATE = 3e-5
     WEIGHT_DECAY = 5e-4
@@ -56,8 +59,8 @@ class Config:
         "gaussian_blur_p": 0.2
     }
     
-    NORMALIZE_MEAN = [0.485, 0.456, 0.406]
-    NORMALIZE_STD = [0.229, 0.224, 0.225]
+    NORMALIZE_MEAN = [0.48145466, 0.4578275, 0.40821073]
+    NORMALIZE_STD = [0.26862954, 0.26130258, 0.27577711]
     
     CHECKPOINT_DIR = "checkpoints"
     BEST_MODEL_PATH = os.path.join(CHECKPOINT_DIR, "best_model.pth")
