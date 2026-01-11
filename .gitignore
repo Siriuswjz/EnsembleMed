@@ -26,7 +26,6 @@ wheels/
 
 # Data
 data/
-*.csv
 !requirements.txt
 
 # Models and outputs
@@ -57,4 +56,3 @@ Thumbs.db
 .venv
 env/
 venv/
-*.pth
