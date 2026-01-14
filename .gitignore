@@ -33,6 +33,7 @@ models/
 output/
 features/
 checkpoints/
+CLAUDE.md
 
 # Logs
 *.log

@@ -38,7 +38,7 @@ python metric_ensemble.py
 ### 双模型投票 (vote_ensemble.py)
 
 结合两个高准确率模型的预测:
-- Model 1: best_0.90 (ConvNeXt + ViT @ 448)
+- Model 1: base_train (ConvNeXt + ViT @ 448)
 - Model 2: metric_ensemble (0.92)
 
 **投票策略**:
@@ -92,7 +92,7 @@ python analyze_predictions.py
 
 | 模型 | 准确率 | 备注 |
 |------|--------|------|
-| best_0.90 | 0.90 | ConvNeXt + ViT |
+| base_train | 0.90 | ConvNeXt + ViT |
 | metric_ensemble | 0.92 | 改进训练策略 |
 | **双模型投票** | **0.93** | ✅ 最佳 |
 | metric_v3 | 0.82 | 不同策略，效果差 |
