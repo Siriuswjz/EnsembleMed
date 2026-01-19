@@ -8,9 +8,9 @@ Metric learning approach for medical image classification using Triplet Loss + K
 
 ```
 ├── ensemble_learning/
-│   ├── train.py         # Train metric learning model (0.92)
-│   ├── base_train.py    # Baseline model (0.90)
-│   ├── ensemble.py      # Dual-model soft voting (0.93)
+│   ├── train.py         # Train metric learning model
+│   ├── base_train.py    # Baseline model
+│   ├── ensemble.py      # Dual-model soft voting
 │   └── analyze.py       # Compare model predictions
 ├── data/
 │   ├── TrainSet/        # 1639 images (normal/disease)
@@ -21,14 +21,14 @@ Metric learning approach for medical image classification using Triplet Loss + K
 ## Usage
 
 ```bash
-# Train baseline model (0.90)
+# Train baseline model
 cd ensemble_learning
 python base_train.py
 
-# Train metric model (0.92)
+# Train metric model 
 python train.py
 
-# Generate final predictions (0.93)
+# Generate final predictions 
 python ensemble.py
 ```
 
@@ -39,7 +39,6 @@ python ensemble.py
 - **Differential LR**: 1e-3 for adapter, 5e-6 for backbone
 - **High resolution**: 448x448
 - **TTA**: 4-view test-time augmentation
-- **Soft voting**: Weighted ensemble of 0.90 + 0.92 models
 
 ## Dependencies
 
